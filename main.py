@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import json
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 import requests
 
 logging.basicConfig(
@@ -27,9 +29,23 @@ SEARCH_PARAMS = {
 }
 
 MAX_PRICE_GBP = 11
-
+STATS_FILE = os.environ.get("STATS_FILE", "/tmp/pika_stats.json")
+KST = timezone(timedelta(hours=9))
 
 last_alerted_item_id = None
+
+
+def load_stats() -> dict:
+    try:
+        with open(STATS_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"checks": 0, "alerts": 0}
+
+
+def save_stats(stats: dict):
+    with open(STATS_FILE, "w") as f:
+        json.dump(stats, f)
 
 
 def get_session() -> requests.Session:
@@ -84,13 +100,35 @@ def send_slack_alert(item: dict, available_qty: int, price_gbp: float):
         log.error("Slack 전송 실패: %s %s", resp.status_code, resp.text)
 
 
+def send_daily_summary():
+    stats = load_stats()
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    text = (
+        f"*📊 일일 모니터링 리포트 ({today})*\n"
+        f"*확인 건수:* {stats['checks']}건\n"
+        f"*알림 발송:* {stats['alerts']}건"
+    )
+    resp = requests.post(SLACK_WEBHOOK, json={"text": text}, timeout=10)
+    if resp.status_code == 200:
+        log.info("일일 리포트 전송 완료")
+    else:
+        log.error("일일 리포트 전송 실패: %s %s", resp.status_code, resp.text)
+
+    save_stats({"checks": 0, "alerts": 0})
+
+
 def check_once():
     global last_alerted_item_id
+
+    stats = load_stats()
+    stats["checks"] += 1
+    alerted = False
 
     session = get_session()
     item = fetch_newest_item(session)
     if not item:
         log.info("검색 결과 없음")
+        save_stats(stats)
         return
 
     item_id = item.get("itemId") or item.get("asin")
@@ -99,6 +137,7 @@ def check_once():
 
     if item_id == last_alerted_item_id:
         log.info("이미 알림 보낸 아이템 — 스킵")
+        save_stats(stats)
         return
 
     price_gbp = item.get("priceRaw", 0)
@@ -108,6 +147,7 @@ def check_once():
     if available_qty >= 2 and price_gbp <= MAX_PRICE_GBP:
         log.info("✅ 조건 충족! 알림 전송")
         send_slack_alert(item, available_qty, price_gbp)
+        stats["alerts"] += 1
         last_alerted_item_id = item_id
     else:
         reasons = []
@@ -117,6 +157,15 @@ def check_once():
             reasons.append(f"가격 £{price_gbp:.2f} (£11 이하 필요)")
         log.info("❌ 조건 미충족: %s", ", ".join(reasons))
 
+    save_stats(stats)
+
 
 if __name__ == "__main__":
-    check_once()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--summary", action="store_true")
+    args = parser.parse_args()
+
+    if args.summary:
+        send_daily_summary()
+    else:
+        check_once()

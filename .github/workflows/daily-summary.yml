@@ -1,12 +1,12 @@
-name: pika-alarm
+name: daily-summary
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 13 * * *"  # 매일 22시 KST (13:00 UTC)
   workflow_dispatch:
 
 jobs:
-  check:
+  summary:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,15 +21,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /tmp/pika_stats.json
-          key: stats-${{ github.run_id }}
+          key: stats-dummy
           restore-keys: stats-
 
-      - run: python main.py
+      - run: python main.py --summary
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-      - name: Save stats cache
+      - name: Reset stats for next day
         uses: actions/cache/save@v4
         with:
           path: /tmp/pika_stats.json
-          key: stats-${{ github.run_id }}
+          key: stats-reset-${{ github.run_id }}
