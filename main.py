@@ -26,8 +26,8 @@ SEARCH_PARAMS = {
     "filter": "fixed",
 }
 
-MAX_PRICE_KRW = 38000
-CHECK_INTERVAL = 300  # 5분
+MAX_PRICE_GBP = 11
+
 
 last_alerted_item_id = None
 
@@ -53,35 +53,26 @@ def fetch_newest_item(session: requests.Session) -> dict | None:
     return items[0]
 
 
-def fetch_detail(session: requests.Session, item_id: str) -> tuple[int, float]:
-    """Returns (available_quantity, price_krw)."""
+def fetch_detail(session: requests.Session, item_id: str) -> int:
+    """Returns available_quantity."""
     resp = session.get(DETAIL_URL + f"/{item_id}", params={"country": "GB"}, timeout=10)
     resp.raise_for_status()
     data = resp.json()
 
-    config = data.get("config", {})
-    price_usd = config.get("price", 0)
-    exchange_rate = config.get("exchangeRate", 1400)
-    price_krw = price_usd * exchange_rate
-
     html = data.get("html", "")
     qty_match = re.search(r"changeQuantity\(1,\s*(\d+)\)", html)
-    available_qty = int(qty_match.group(1)) if qty_match else 1
-
-    return available_qty, price_krw
+    return int(qty_match.group(1)) if qty_match else 1
 
 
-def send_slack_alert(item: dict, available_qty: int, price_krw: float):
+def send_slack_alert(item: dict, available_qty: int, price_gbp: float):
     item_id = item.get("itemId") or item.get("asin")
     title = item.get("title", "Unknown")
-    price_display = item.get("price", "N/A")
     az365_link = f"{SITE_URL}/ebay/detail/{item_id}?country=GB"
 
     text = (
         f"*🔔 피카츄 뮤지엄 알림!*\n"
         f"*상품명:* {title}\n"
-        f"*현지가:* {price_display}\n"
-        f"*원화가:* {price_krw:,.0f}원\n"
+        f"*가격:* £{price_gbp:.2f}\n"
         f"*수량:* {available_qty}개 가능\n"
         f"<{az365_link}|바로가기>"
     )
@@ -110,19 +101,20 @@ def check_once():
         log.info("이미 알림 보낸 아이템 — 스킵")
         return
 
-    available_qty, price_krw = fetch_detail(session, item_id)
-    log.info("수량: %d개, 원화가: %.0f원", available_qty, price_krw)
+    price_gbp = item.get("priceRaw", 0)
+    available_qty = fetch_detail(session, item_id)
+    log.info("수량: %d개, 가격: £%.2f", available_qty, price_gbp)
 
-    if available_qty > 1 and price_krw <= MAX_PRICE_KRW:
+    if available_qty >= 2 and price_gbp <= MAX_PRICE_GBP:
         log.info("✅ 조건 충족! 알림 전송")
-        send_slack_alert(item, available_qty, price_krw)
+        send_slack_alert(item, available_qty, price_gbp)
         last_alerted_item_id = item_id
     else:
         reasons = []
-        if available_qty <= 1:
+        if available_qty < 2:
             reasons.append(f"수량 {available_qty}개 (2개 이상 필요)")
-        if price_krw > MAX_PRICE_KRW:
-            reasons.append(f"가격 {price_krw:,.0f}원 (38,000원 이하 필요)")
+        if price_gbp > MAX_PRICE_GBP:
+            reasons.append(f"가격 £{price_gbp:.2f} (£11 이하 필요)")
         log.info("❌ 조건 미충족: %s", ", ".join(reasons))
 
 
