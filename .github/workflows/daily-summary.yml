@@ -3,6 +3,7 @@ name: daily-summary
 on:
   schedule:
     - cron: "0 1 * * *"   # 매일 10시 KST (01:00 UTC)
+    - cron: "26 1 * * *"  # 매일 10:26 KST (01:26 UTC) - 임시
     - cron: "0 13 * * *"  # 매일 22시 KST (13:00 UTC)
   workflow_dispatch:
 
