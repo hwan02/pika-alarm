@@ -32,8 +32,6 @@ MAX_PRICE_GBP = 11
 STATS_FILE = os.environ.get("STATS_FILE", "/tmp/pika_stats.json")
 KST = timezone(timedelta(hours=9))
 
-last_alerted_item_id = None
-
 
 def load_stats() -> dict:
     try:
@@ -59,14 +57,12 @@ def get_session() -> requests.Session:
     return session
 
 
-def fetch_newest_item(session: requests.Session) -> dict | None:
+def fetch_newest_items(session: requests.Session, count: int = 7) -> list[dict]:
     resp = session.get(SEARCH_URL, params=SEARCH_PARAMS, timeout=10)
     resp.raise_for_status()
     data = resp.json()
     items = data.get("items", [])
-    if not items:
-        return None
-    return items[0]
+    return items[:count]
 
 
 def fetch_detail(session: requests.Session, item_id: str) -> int:
@@ -117,47 +113,61 @@ def send_daily_summary():
     save_stats({"checks": 0, "alerts": 0})
 
 
-def check_once():
-    global last_alerted_item_id
+def load_alerted_ids() -> set:
+    try:
+        with open(STATS_FILE) as f:
+            data = json.load(f)
+        return set(data.get("alerted_ids", []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
 
+
+def save_alerted_ids(stats: dict, alerted_ids: set):
+    stats["alerted_ids"] = list(alerted_ids)
+    save_stats(stats)
+
+
+def check_once():
     stats = load_stats()
     stats["checks"] += 1
-    alerted = False
+    alerted_ids = set(stats.get("alerted_ids", []))
 
     session = get_session()
-    item = fetch_newest_item(session)
-    if not item:
+    items = fetch_newest_items(session, count=7)
+    if not items:
         log.info("검색 결과 없음")
-        save_stats(stats)
+        save_alerted_ids(stats, alerted_ids)
         return
 
-    item_id = item.get("itemId") or item.get("asin")
-    title = item.get("title", "")
-    log.info("최신 리스팅: [%s] %s", item_id, title[:50])
+    log.info("최신 %d개 리스팅 탐색 시작", len(items))
 
-    if item_id == last_alerted_item_id:
-        log.info("이미 알림 보낸 아이템 — 스킵")
-        save_stats(stats)
-        return
+    for idx, item in enumerate(items, 1):
+        item_id = item.get("itemId") or item.get("asin")
+        title = item.get("title", "")
+        log.info("[%d/%d] [%s] %s", idx, len(items), item_id, title[:50])
 
-    price_gbp = item.get("priceRaw", 0)
-    available_qty = fetch_detail(session, item_id)
-    log.info("수량: %d개, 가격: £%.2f", available_qty, price_gbp)
+        if item_id in alerted_ids:
+            log.info("  → 이미 알림 보낸 아이템 — 스킵")
+            continue
 
-    if available_qty >= 2 and price_gbp <= MAX_PRICE_GBP:
-        log.info("✅ 조건 충족! 알림 전송")
-        send_slack_alert(item, available_qty, price_gbp)
-        stats["alerts"] += 1
-        last_alerted_item_id = item_id
-    else:
-        reasons = []
-        if available_qty < 2:
-            reasons.append(f"수량 {available_qty}개 (2개 이상 필요)")
-        if price_gbp > MAX_PRICE_GBP:
-            reasons.append(f"가격 £{price_gbp:.2f} (£11 이하 필요)")
-        log.info("❌ 조건 미충족: %s", ", ".join(reasons))
+        price_gbp = item.get("priceRaw", 0)
+        available_qty = fetch_detail(session, item_id)
+        log.info("  → 수량: %d개, 가격: £%.2f", available_qty, price_gbp)
 
-    save_stats(stats)
+        if available_qty >= 2 and price_gbp <= MAX_PRICE_GBP:
+            log.info("  ✅ 조건 충족! 알림 전송")
+            send_slack_alert(item, available_qty, price_gbp)
+            stats["alerts"] += 1
+            alerted_ids.add(item_id)
+        else:
+            reasons = []
+            if available_qty < 2:
+                reasons.append(f"수량 {available_qty}개 (2개 이상 필요)")
+            if price_gbp > MAX_PRICE_GBP:
+                reasons.append(f"가격 £{price_gbp:.2f} (£11 이하 필요)")
+            log.info("  ❌ 조건 미충족: %s", ", ".join(reasons))
+
+    save_alerted_ids(stats, alerted_ids)
 
 
 if __name__ == "__main__":
