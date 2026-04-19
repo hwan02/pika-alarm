@@ -53,23 +53,30 @@ def get_session() -> requests.Session:
         "Accept": "application/json, text/html, */*",
         "Referer": SITE_URL,
     })
-    session.get(SITE_URL, timeout=10)
+    try:
+        session.get(SITE_URL, timeout=15)
+    except requests.exceptions.RequestException as e:
+        log.warning("세션 초기화 요청 실패 (무시하고 계속): %s", e)
     return session
 
 
 def fetch_newest_items(session: requests.Session, count: int = 7) -> list[dict]:
-    resp = session.get(SEARCH_URL, params=SEARCH_PARAMS, timeout=10)
+    resp = session.get(SEARCH_URL, params=SEARCH_PARAMS, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     items = data.get("items", [])
     return items[:count]
 
 
-def fetch_detail(session: requests.Session, item_id: str) -> int:
-    """Returns available_quantity."""
-    resp = session.get(DETAIL_URL + f"/{item_id}", params={"country": "GB"}, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+def fetch_detail(session: requests.Session, item_id: str) -> int | None:
+    """Returns available_quantity, or None on failure."""
+    try:
+        resp = session.get(DETAIL_URL + f"/{item_id}", params={"country": "GB"}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        log.warning("  → 상세 조회 실패 (스킵): %s", e)
+        return None
 
     html = data.get("html", "")
     qty_match = re.search(r"changeQuantity\(1,\s*(\d+)\)", html)
@@ -133,7 +140,12 @@ def check_once():
     alerted_ids = set(stats.get("alerted_ids", []))
 
     session = get_session()
-    items = fetch_newest_items(session, count=7)
+    try:
+        items = fetch_newest_items(session, count=7)
+    except requests.exceptions.RequestException as e:
+        log.error("검색 요청 실패: %s", e)
+        save_alerted_ids(stats, alerted_ids)
+        return
     if not items:
         log.info("검색 결과 없음")
         save_alerted_ids(stats, alerted_ids)
@@ -152,6 +164,8 @@ def check_once():
 
         price_gbp = item.get("priceRaw", 0)
         available_qty = fetch_detail(session, item_id)
+        if available_qty is None:
+            continue
         log.info("  → 수량: %d개, 가격: £%.2f", available_qty, price_gbp)
 
         if available_qty >= 2 and price_gbp <= MAX_PRICE_GBP:
