@@ -28,7 +28,7 @@ SEARCH_PARAMS = {
     "filter": "fixed",
 }
 
-MAX_PRICE_GBP = 11
+MAX_PRICE_GBP = 14
 STATS_FILE = os.environ.get("STATS_FILE", "/tmp/pika_stats.json")
 KST = timezone(timedelta(hours=9))
 
@@ -178,7 +178,7 @@ def check_once():
             if available_qty < 2:
                 reasons.append(f"수량 {available_qty}개 (2개 이상 필요)")
             if price_gbp > MAX_PRICE_GBP:
-                reasons.append(f"가격 £{price_gbp:.2f} (£11 이하 필요)")
+                reasons.append(f"가격 £{price_gbp:.2f} (£14 이하 필요)")
             log.info("  ❌ 조건 미충족: %s", ", ".join(reasons))
 
     save_alerted_ids(stats, alerted_ids)
