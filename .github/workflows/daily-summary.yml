@@ -1,9 +1,10 @@
 name: daily-summary
 
 on:
-  schedule:
-    - cron: "0 1 * * *"   # 매일 10시 KST (01:00 UTC)
-    - cron: "0 13 * * *"  # 매일 22시 KST (13:00 UTC)
+  # 구매 완료로 정기 요약 중단. 필요 시 수동 실행만 사용.
+  # schedule:
+  #   - cron: "0 1 * * *"   # 매일 10시 KST (01:00 UTC)
+  #   - cron: "0 13 * * *"  # 매일 22시 KST (13:00 UTC)
   workflow_dispatch:
 
 jobs:

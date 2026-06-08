@@ -1,8 +1,9 @@
 name: pika-alarm
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # 구매 완료로 정기 알람 중단. 필요 시 수동 실행만 사용.
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
